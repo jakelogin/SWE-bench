@@ -62,6 +62,12 @@ DOCKER_CLIENT_TIMEOUT = int(os.environ.get("SWEBENCH_DOCKER_TIMEOUT", "1800"))
 DOCKER_CLIENT_POOL_SIZE = int(os.environ.get("SWEBENCH_DOCKER_POOL_SIZE", "128"))
 
 
+def _write_utf8_lf(path: Path, content: str) -> None:
+    """Write evaluator text artifacts portably, without Windows codepage/CRLF conversion."""
+    with path.open("w", encoding="utf-8", newline="\n") as file:
+        file.write(content)
+
+
 def _docker_client() -> docker.DockerClient:
     return docker.from_env(
         timeout=DOCKER_CLIENT_TIMEOUT,
@@ -288,7 +294,7 @@ def run_instance(
         if not skip_patch:
             # Copy model prediction as patch file to container
             patch_file = Path(log_dir / "patch.diff")
-            patch_file.write_text(pred["model_patch"] or "")
+            _write_utf8_lf(patch_file, pred["model_patch"] or "")
             logger.info(
                 f"Intermediate patch for {instance_id} written to {patch_file}, now applying to container..."
             )
@@ -357,7 +363,7 @@ def run_instance(
         )
 
         eval_file = Path(log_dir / "eval.sh")
-        eval_file.write_text(_inject_asset_restore(test_spec.eval_script, restore_cmds))
+        _write_utf8_lf(eval_file, _inject_asset_restore(test_spec.eval_script, restore_cmds))
         logger.info(
             f"Eval script for {instance_id} written to {eval_file}; copying to container..."
         )
@@ -369,16 +375,16 @@ def run_instance(
         )
         test_output_path = log_dir / LOG_TEST_OUTPUT
         logger.info(f"Test runtime: {total_runtime:_.2f} seconds")
-        with open(test_output_path, "w") as f:
-            f.write(test_output)
-            logger.info(f"Test output for {instance_id} written to {test_output_path}")
-            if timed_out:
-                f.write(f"\n\nTimeout error: {timeout} seconds exceeded.")
-                raise EvaluationError(
-                    instance_id,
-                    f"Test timed out after {timeout} seconds.",
-                    logger,
-                )
+        if timed_out:
+            test_output += f"\n\nTimeout error: {timeout} seconds exceeded."
+        _write_utf8_lf(test_output_path, test_output)
+        logger.info(f"Test output for {instance_id} written to {test_output_path}")
+        if timed_out:
+            raise EvaluationError(
+                instance_id,
+                f"Test timed out after {timeout} seconds.",
+                logger,
+            )
 
         # Get git diff after running eval script (ignore permission changes)
         git_diff_output_after = (
